@@ -22,6 +22,8 @@ def dkbflx(tin, photon_index, energy, dtype=tf.float32):
     returns:
         float: photon flux in photons/s/cm^2/kev.
     """
+    batch_shape = tin.shape
+
     gauss = tf.constant(
         [0.236926885, 0.478628670, 0.568888888, 0.478628670,
          0.236926885, -0.906179846, -0.538469310, 0.0,
@@ -36,28 +38,37 @@ def dkbflx(tin, photon_index, energy, dtype=tf.float32):
     xh = xn * (2. * tf.range(1, nnn+1, 1, dtype=dtype) - 1)
     x = xn * gauss_right[tf.newaxis, :] + xh[..., tf.newaxis]
 
-    energy_batch = energy[..., tf.newaxis, tf.newaxis]
+    assert energy.shape == (3491, 5)
+    energy_integ = energy[tf.newaxis, ..., tf.newaxis, tf.newaxis]
+    tin_integ = tin[..., tf.newaxis, tf.newaxis, tf.newaxis, tf.newaxis]
+    photon_index_integ = photon_index[..., tf.newaxis, tf.newaxis,
+                                      tf.newaxis, tf.newaxis]
+    assert energy_integ.shape == (1, 3491, 5, 1, 1)
     dk = tf.where(
-        energy_batch / tin / x >= 170,
-        x ** (-2.0 / photon_index - 1.0) * tf.exp(
-            -energy_batch / tin / x),
-        x ** (-2.0 / photon_index - 1.0) / (
-            tf.exp(energy_batch / tin / x) - 1.0)
+        energy_integ / tin_integ / x >= 170,
+        x ** (-2.0 / photon_index_integ - 1.0) * tf.exp(
+            -energy_integ / tin_integ / x),
+        x ** (-2.0 / photon_index_integ - 1.0) / (tf.exp(
+            energy_integ / tin_integ / x) - 1.0)
     )
     photon = tf.reduce_sum(gauss_left * dk * xn, axis=[-2, -1])
-    photar = 2.78e-3 * energy * energy * photon * (0.75 / photon_index)
+
+    energy_batch = energy[tf.newaxis, :, :]
+    photon_index_batch = photon_index[..., tf.newaxis, tf.newaxis]
+    photar = 2.78e-3 * energy_batch * energy_batch * photon * (
+        0.75 / photon_index_batch)
 
     assert x.shape == (nnn, 5)
     assert energy.shape == (3491, 5)
-    assert dk.shape == (3491, 5, nnn, 5)
+    assert dk.shape == (*batch_shape, 3491, 5, nnn, 5)
     assert gauss_left.shape == (5,)
-    assert photon.shape == (3491, 5)
-    assert photar.shape == (3491, 5)
+    assert photon.shape == (*batch_shape, 3491, 5)
+    assert photar.shape == (*batch_shape, 3491, 5)
 
     return photar
 
 
-@tf.function(autograph=False, jit_compile=True)
+# @tf.function(autograph=False, jit_compile=True)
 def diskpbb(ear, ne, param, ifl, dtype=tf.float32):
     """
     compute the multicolor disk blackbody model spectrum.
@@ -79,7 +90,7 @@ def diskpbb(ear, ne, param, ifl, dtype=tf.float32):
 
     photer = tf.zeros(ne, dtype=dtype)
 
-    tin, p = param
+    tin, p = tf.unstack(param, axis=-1)
 
     ear_shifted = ear[1:]
     ear_prev = ear[:-1]
@@ -105,6 +116,10 @@ def main():
     param = [0.2, 3/4]                 # [tin, p]
     ifl = 1                            # ???
 
+    param = tf.constant(
+        [[0.2, 0.75],
+         [0.1, 0.75]])
+
     import time
     t0 = time.time()
     photar, photer = diskpbb(ear, ne, param, ifl)
@@ -115,10 +130,11 @@ def main():
     import matplotlib.pyplot as plt
     energy_centers = (ear[:-1] + ear[1:]) / 2
     fig, ax = plt.subplots()
-    ax.plot(energy_centers, photar)
+    for i in range(param.shape[0]):
+        ax.plot(energy_centers, photar[i])
     ax.set_xscale("log")
     ax.set_yscale("log")
-    # plt.show()
+    plt.show()
     plt.close()
 
 
